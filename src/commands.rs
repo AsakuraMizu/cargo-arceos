@@ -13,56 +13,91 @@ trait CargoOptionsExt {
 }
 
 macro_rules! impl_cargo_options_ext {
-    ($command:path) => {
-        impl CargoOptionsExt for $command {
-            fn build(&mut self) -> Command {
-                if !self.target.is_empty() {
-                    self.target.clear();
-                    crate::warn("`--target` option is ignored");
-                }
-
-                let mut command = self.command();
-                if self.message_format.is_empty() {
-                    command
-                        .arg("--message-format=json-render-diagnostics")
-                        .stdout(Stdio::piped());
-                }
-                command
+    (@common) => {
+        fn target_dir(&self) -> anyhow::Result<PathBuf> {
+            if let Some(target_dir) = &self.target_dir {
+                return Ok(PathBuf::from(target_dir));
             }
 
-            fn target_dir(&self) -> anyhow::Result<PathBuf> {
-                if let Some(target_dir) = &self.target_dir {
-                    return Ok(PathBuf::from(target_dir));
-                }
-
-                let mut metadata = cargo_metadata::MetadataCommand::new();
-                if let Some(manifest_path) = &self.manifest_path {
-                    metadata.manifest_path(manifest_path);
-                }
-                metadata.no_deps();
-                let metadata = metadata.exec().context("failed to get metadata")?;
-
-                Ok(metadata.target_directory.into())
+            let mut metadata = cargo_metadata::MetadataCommand::new();
+            if let Some(manifest_path) = &self.manifest_path {
+                metadata.manifest_path(manifest_path);
             }
+            metadata.no_deps();
+            let metadata = metadata.exec().context("failed to get metadata")?;
 
-            fn profile(&self) -> &str {
-                if self.release {
-                    "release"
-                } else if let Some(profile) = &self.profile {
-                    profile
-                } else {
-                    "debug"
-                }
+            Ok(metadata.target_directory.into())
+        }
+
+        fn profile(&self) -> &str {
+            if self.release {
+                "release"
+            } else if let Some(profile) = &self.profile {
+                profile
+            } else {
+                "debug"
             }
         }
     };
+    (@args $self:ident) => {
+        if !$self.args.is_empty() {
+            crate::warn(format!("extra args `{}` is ignored", $self.args.join(" ")));
+            $self.args.clear();
+        }
+    };
+    (@target $self:ident) => {
+        if !$self.target.is_empty() {
+            $self.target.clear();
+            crate::warn("`--target` option is ignored");
+        }
+    };
+    (@stdout $self:ident $command:ident) => {
+        if $self.message_format.is_empty() {
+            $command
+                .arg("--message-format=json-render-diagnostics")
+                .stdout(Stdio::piped());
+        }
+    };
+    ($command:path) => {
+        impl CargoOptionsExt for $command {
+            fn build(&mut self) -> Command {
+                impl_cargo_options_ext!(@args self);
+                impl_cargo_options_ext!(@target self);
+                let mut command = self.command();
+                impl_cargo_options_ext!(@stdout self command);
+                command
+            }
+            impl_cargo_options_ext!(@common);
+        }
+    };
+    (no_arg $command:path) => {
+        impl CargoOptionsExt for $command {
+            fn build(&mut self) -> Command {
+                impl_cargo_options_ext!(@target self);
+                let mut command = self.command();
+                impl_cargo_options_ext!(@stdout self command);
+                command
+            }
+            impl_cargo_options_ext!(@common);
+        }
+    };
+    (no_stdout $command:path) => {
+        impl CargoOptionsExt for $command {
+            fn build(&mut self) -> Command {
+                impl_cargo_options_ext!(@args self);
+                impl_cargo_options_ext!(@target self);
+                self.command()
+            }
+            impl_cargo_options_ext!(@common);
+        }
+    }
 }
 
-impl_cargo_options_ext!(cargo_options::Build);
+impl_cargo_options_ext!(no_arg cargo_options::Build);
 impl_cargo_options_ext!(cargo_options::Rustc);
-impl_cargo_options_ext!(cargo_options::Check);
+impl_cargo_options_ext!(no_arg cargo_options::Check);
 impl_cargo_options_ext!(cargo_options::Clippy);
-impl_cargo_options_ext!(cargo_options::Run);
+impl_cargo_options_ext!(no_stdout cargo_options::Run);
 impl_cargo_options_ext!(cargo_options::Test);
 
 macro_rules! command {
@@ -126,7 +161,7 @@ pub struct Runner {
 }
 
 impl Runner {
-    pub fn execute(&self) -> anyhow::Result<()> {
-        self.qemu.execute(&self.binary)
+    pub fn execute(self) -> anyhow::Result<()> {
+        self.qemu.execute(self.binary)
     }
 }

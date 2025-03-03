@@ -1,7 +1,8 @@
 use axconfig_gen::Config;
+use strum::{AsRefStr, Display, EnumString, VariantNames};
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display)]
+#[derive(Debug, Clone, Copy, EnumString, VariantNames, AsRefStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Platform {
     Dummy,
@@ -12,10 +13,8 @@ pub enum Platform {
     LOONGARCH64_QEMU_VIRT,
     RISCV64_QEMU_VIRT,
     #[strum(to_string = "x86_64-pc-oslab")]
-    #[value(name = "x86_64-pc-oslab")]
     X86_64_PC_OSLAB,
     #[strum(to_string = "x86_64-qemu-q35")]
-    #[value(name = "x86_64-qemu-q35")]
     X86_64_QEMU_Q35,
 }
 
@@ -41,13 +40,13 @@ impl From<Platform> for Config {
     }
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display)]
+#[derive(Debug, Clone, Copy, EnumString, VariantNames, AsRefStr, Display)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Arch {
     Aarch64,
     Loongarch64,
     Riscv64,
     #[strum(to_string = "x86_64")]
-    #[value(name = "x86_64")]
     X86_64,
 }
 
