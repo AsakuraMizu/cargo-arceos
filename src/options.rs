@@ -3,9 +3,9 @@ use std::{
     process::Command,
 };
 
+use anyhow::Context;
 use axconfig_gen::{Config, ConfigValue};
 use clap::{Args, ValueEnum};
-use console::style;
 use heck::ToShoutySnakeCase;
 
 use crate::platforms::{Arch, Platform};
@@ -105,7 +105,12 @@ impl ArceOSOptions {
         }
     }
 
-    pub fn apply(&self, target_dir: &Path, profile: &str, command: &mut Command) {
+    pub fn apply(
+        &self,
+        target_dir: &Path,
+        profile: &str,
+        command: &mut Command,
+    ) -> anyhow::Result<()> {
         let platform: Platform = self.platform();
         let arch: Arch = self.arch();
         let target = self.target();
@@ -117,15 +122,19 @@ impl ArceOSOptions {
         // Update config file
         let config_path = binary_dir.join("axconfig.toml");
         if !config_path.exists() {
-            std::fs::create_dir_all(&binary_dir).expect("failed to create target directory");
+            std::fs::create_dir_all(&binary_dir).context("failed to create target directory")?;
         }
 
         let mut config: Config = platform.into();
         for path in &self.configs {
             let toml = std::fs::read_to_string(path)
-                .unwrap_or_else(|_| panic!("failed to read config file: {}", path.display()));
-            let c = Config::from_toml(&toml).expect("failed to parse config file");
-            config.merge(&c).expect("failed to merge config files");
+                .with_context(|| format!("failed to read config file `{}`", path.display()))?;
+            let c = Config::from_toml(&toml).map_err(|e| {
+                anyhow::anyhow!("failed to parse config file `{}`: {}", path.display(), e)
+            })?;
+            config.merge(&c).map_err(|e| {
+                anyhow::anyhow!("failed to merge config file `{}`: {}", path.display(), e)
+            })?;
         }
         config
             .config_at_mut(Config::GLOBAL_TABLE_NAME, "smp")
@@ -139,7 +148,7 @@ impl ArceOSOptions {
             .ok()
             .is_none_or(|old_config| old_config != config)
         {
-            std::fs::write(&config_path, config).expect("failed to write config file");
+            std::fs::write(&config_path, config).context("failed to write config file")?;
         }
 
         // Set environment variables
@@ -162,6 +171,8 @@ impl ArceOSOptions {
                 ),
             );
         }
+
+        Ok(())
     }
 
     fn features(&self) -> Vec<&Feature> {
@@ -181,13 +192,10 @@ impl ArceOSOptions {
     pub fn check_features(&self, package: &str, features: &[String]) {
         for f in self.features() {
             if f.packages.contains(&package) && !features.contains(&f.name.to_string()) {
-                eprintln!(
-                    "{}: feature `{}` should be enabled for package `{}` when {}",
-                    style("warning").yellow().bold().for_stderr(),
-                    f.name,
-                    package,
-                    f.cond
-                );
+                crate::warn(format!(
+                    "feature `{}` should be enabled for package `{}` when {}",
+                    f.name, package, f.cond
+                ));
             }
         }
     }
@@ -212,6 +220,10 @@ impl QEMUOptions {
             runner.push("--smp");
             runner.push(smp);
         }
+        if let Some(mem) = &self.mem {
+            runner.push("--mem");
+            runner.push(mem);
+        }
 
         command.env(
             format!("CARGO_TARGET_{}_RUNNER", target.to_shouty_snake_case()),
@@ -219,8 +231,8 @@ impl QEMUOptions {
         );
     }
 
-    pub fn execute(&self, binary: &Path) {
-        let platform = Platform::from_str(&std::env::var("AX_PLATFORM").unwrap(), false).unwrap();
+    pub fn execute(&self, binary: &Path) -> anyhow::Result<()> {
+        let platform = Platform::from_str(&std::env::var("AX_PLATFORM")?, false).unwrap();
 
         let (machine, mem) = match platform {
             Platform::AARCH64_QEMU_VIRT => ("virt", None),
@@ -228,7 +240,7 @@ impl QEMUOptions {
             Platform::LOONGARCH64_QEMU_VIRT => ("virt", Some("1G")),
             Platform::RISCV64_QEMU_VIRT => ("virt", None),
             Platform::X86_64_QEMU_Q35 => ("q35", None),
-            _ => panic!("unsupported platform: {}", platform),
+            _ => anyhow::bail!("unsupported platform: {}", platform),
         };
 
         let arch: Arch = platform.into();
@@ -244,13 +256,12 @@ impl QEMUOptions {
                 let elf = binary;
                 let kernel = binary.with_extension("bin");
 
-                let status = Command::new("rust-objcopy")
+                let mut command = Command::new("rust-objcopy");
+                command
                     .args(["--strip-all", "-O", "binary"])
                     .arg(elf)
-                    .arg(&kernel)
-                    .status()
-                    .expect("failed to execute rust-objcopy");
-                crate::check_exit_status("rust-objcopy", status);
+                    .arg(&kernel);
+                crate::run_command(&mut command)?;
 
                 kernel
             }
@@ -277,18 +288,6 @@ impl QEMUOptions {
 
         command.arg("-nographic");
 
-        eprintln!(
-            "     {} `{} {}`",
-            style("Running").green().bold().for_stderr(),
-            command.get_program().to_string_lossy(),
-            command
-                .get_args()
-                .map(|arg| arg.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-
-        let status = command.status().expect("failed to execute qemu");
-        crate::check_exit_status("qemu", status);
+        crate::run_command(&mut command)
     }
 }

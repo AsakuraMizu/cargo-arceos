@@ -3,12 +3,12 @@ use std::{
     process::{Command, Stdio},
 };
 
+use anyhow::Context;
 use clap::Args;
-use console::style;
 
 trait CargoOptionsExt {
     fn build(&mut self) -> Command;
-    fn target_dir(&self) -> PathBuf;
+    fn target_dir(&self) -> anyhow::Result<PathBuf>;
     fn profile(&self) -> &str;
 }
 
@@ -18,15 +18,7 @@ macro_rules! impl_cargo_options_ext {
             fn build(&mut self) -> Command {
                 if !self.target.is_empty() {
                     self.target.clear();
-                    eprintln!(
-                        "{}",
-                        style(format!(
-                            "{}: `--target` option is ignored",
-                            style("warning").yellow()
-                        ))
-                        .bold()
-                        .for_stderr()
-                    );
+                    crate::warn("`--target` option is ignored");
                 }
 
                 let mut command = self.command();
@@ -38,9 +30,9 @@ macro_rules! impl_cargo_options_ext {
                 command
             }
 
-            fn target_dir(&self) -> PathBuf {
+            fn target_dir(&self) -> anyhow::Result<PathBuf> {
                 if let Some(target_dir) = &self.target_dir {
-                    return PathBuf::from(target_dir);
+                    return Ok(PathBuf::from(target_dir));
                 }
 
                 let mut metadata = cargo_metadata::MetadataCommand::new();
@@ -48,9 +40,9 @@ macro_rules! impl_cargo_options_ext {
                     metadata.manifest_path(manifest_path);
                 }
                 metadata.no_deps();
-                let metadata = metadata.exec().expect("failed to get metadata");
+                let metadata = metadata.exec().context("failed to get metadata")?;
 
-                metadata.target_directory.into()
+                Ok(metadata.target_directory.into())
             }
 
             fn profile(&self) -> &str {
@@ -84,14 +76,14 @@ macro_rules! command {
         }
 
         impl $command {
-            pub fn build(&mut self) -> Command {
+            pub fn build(&mut self) -> anyhow::Result<Command> {
                 let mut command = self.cargo.build();
 
-                let target_dir = self.cargo.target_dir();
+                let target_dir = self.cargo.target_dir()?;
                 let profile = self.cargo.profile();
-                self.arceos.apply(&target_dir, profile, &mut command);
+                self.arceos.apply(&target_dir, profile, &mut command)?;
 
-                command
+                Ok(command)
             }
         }
     };
@@ -113,16 +105,16 @@ pub struct Run {
 }
 
 impl Run {
-    pub fn build(&mut self) -> Command {
+    pub fn build(&mut self) -> anyhow::Result<Command> {
         let mut command = self.cargo.build();
 
-        let target_dir = self.cargo.target_dir();
+        let target_dir = self.cargo.target_dir()?;
         let profile = self.cargo.profile();
-        self.arceos.apply(&target_dir, profile, &mut command);
+        self.arceos.apply(&target_dir, profile, &mut command)?;
 
         self.qemu.apply(self.arceos.target(), &mut command);
 
-        command
+        Ok(command)
     }
 }
 
@@ -134,7 +126,7 @@ pub struct Runner {
 }
 
 impl Runner {
-    pub fn execute(&self) {
-        self.qemu.execute(&self.binary);
+    pub fn execute(&self) -> anyhow::Result<()> {
+        self.qemu.execute(&self.binary)
     }
 }

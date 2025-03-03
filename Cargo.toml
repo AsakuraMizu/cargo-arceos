@@ -5,6 +5,7 @@ edition = "2024"
 description = "Compile an ArceOS app with ease"
 
 [dependencies]
+anyhow = "1.0.97"
 axconfig-gen = "0.1"
 cargo-options = "0.7"
 cargo_metadata = "0.19"
