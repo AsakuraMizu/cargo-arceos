@@ -46,7 +46,7 @@ virtio-mmio-regions = [] # [(uint, uint)]
 # Base physical address of the PCIe ECAM space.
 pci-ecam-base = 0x2000_0000 # uint
 # End PCI bus number.
-pci-bus-end = 0 # uint
+pci-bus-end = 0x7f # uint
 # PCI device memory ranges.
 pci-ranges = [[0, 0], [0x4000_0000, 0x0002_0000]] # [(uint, uint)]
 # poweroff {
